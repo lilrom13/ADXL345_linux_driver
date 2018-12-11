@@ -1,0 +1,8 @@
+.tmp_versions/
+.*.cmd
+*.mk
+*.o
+*.symvers
+*.order
+*.ko
+.*.c
