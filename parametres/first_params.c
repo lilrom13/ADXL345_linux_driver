@@ -5,14 +5,17 @@
 
 static char *message = "Hello world!";
 int entier=-1;
+bool default_values = true;
 module_param(message, charp, S_IRUGO);
 module_param(entier, int, S_IRUGO);
+module_param(default_values, bool, S_IRUGO);
 MODULE_PARM_DESC(message, "The message to print");
-MODULE_PARM_DESC(entier, "Une valeur entiere");
+MODULE_PARM_DESC(entier, "An int value");
+MODULE_PARM_DESC(default_values, "Are we using default parameters ?");
 
 static int __init first_init(void)
 {
-  pr_info("%d, %s\n", entier, message);
+  pr_info("%d, %s, default values %d\n", entier, message, default_values);
   return 0;
 }
 
