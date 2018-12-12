@@ -50,24 +50,32 @@ struct adi_adxl345_device {
 
 ssize_t adi_adxl345_read(struct file *file, char __user *buf, size_t count, loff_t *f_pos)
 {
-  char DATAX0[2]     = { 0x32, 0 }; // 0x32 50 DATAX0 R 00000000 X-Axis Data 0
-
   struct miscdevice *miscdev = (struct miscdevice *) file->private_data;
-  struct i2c_client *client = to_i2c_client(miscdev->parent);
+  struct i2c_client *client  = to_i2c_client(miscdev->parent);
+  char   DATAX0              = { 0x32 }; // 0x32 50 DATAX0 R 00000000 X-Axis Data 0
+  char   DATAX0_REC[2]       = { 0, 0};
 
-  i2c_master_send(client, DATAX0, 1);
-  i2c_master_recv(client, &DATAX0[1], 1);
+  i2c_master_send(client, &DATAX0, 1);
+  i2c_master_recv(client, DATAX0_REC, 2);
 
-  if (count >= 1) {
-    put_user(DATAX0[1], buf);
+  pr_info("user asked for %d byte(s)\n", count);
+
+  if (count == 1) {
+    char a = ((DATAX0_REC[0]>>2) && 0x3f) | DATAX0_REC[1] << 6;
+
+    copy_to_user(buf,&a, 1);
+
     return 1;
+  } else {
+    copy_to_user(buf,&DATAX0_REC, 2);
+
+    return 2;
   }
-  return 0;
 }
 
 static const struct file_operations adi_adxl345_fops = {
-    .owner			= THIS_MODULE,
-    .read       = adi_adxl345_read
+    .owner = THIS_MODULE,
+    .read  = adi_adxl345_read
 };
 
 static int adi_adxl345_probe(struct i2c_client *client, const struct i2c_device_id *id) {
@@ -87,11 +95,6 @@ static int adi_adxl345_probe(struct i2c_client *client, const struct i2c_device_
                          GFP_KERNEL);
    if (!adi_adxl345_dev)
        return -ENOMEM;
-
-  /* Initialise la structure foo_device, par exemple avec les
-     informations issues du Device Tree */
-  // adi_adxl345_dev->i2c_cl      = *client;
-  // adi_adxl345_dev->i2c_dev_id  = *id;
 
   /* Initialise la partie miscdevice de foo_device */
   adi_adxl345_dev->miscdev.minor  = MISC_DYNAMIC_MINOR;
@@ -132,13 +135,14 @@ static int adi_adxl345_probe(struct i2c_client *client, const struct i2c_device_
 
 static int adi_adxl345_remove(struct i2c_client *client)
 {
-  char STANDBYON[2]   = { 0x2D, 0 }; //0x2D 45 POWER_CTL R/W 00000000 Power-saving features control
+  char STANDBYON[2]              = { 0x2D, 0 }; //0x2D 45 POWER_CTL R/W 00000000 Power-saving features control
+  struct adi_adxl345_device *dev = i2c_get_clientdata(client);
 
   i2c_master_send(client, STANDBYON, 2);
   i2c_master_send(client, STANDBYON, 1);
   i2c_master_recv(client, &STANDBYON[1], 1);
 
-  //misc_deregister(&adi_adxl345_dev->miscdev);
+  misc_deregister(&dev->miscdev);
 
   pr_info("adi_adxl345 remove, POWER_CTL = %hhx\n", STANDBYON[1]);
   return 0;
