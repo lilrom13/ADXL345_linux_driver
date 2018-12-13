@@ -14,86 +14,78 @@
 #include <linux/slab.h>
 #include <linux/wait.h>
 
-// buffer definition
-
 #define BUFFER_SIZE 64
 
-typedef struct circular_buffer {
-    void *buffer;     // data buffer
-    void *buffer_end; // end of data buffer
-    size_t capacity;  // maximum number of items in the buffer
-    size_t count;     // number of items in the buffer
-    size_t sz;        // size of each item in the buffer
-    void *head;       // pointer to head
-    void *tail;       // pointer to tail
+typedef struct circular_buffer_t {
+  int  first, last, size, max_size;
+  char *buffer;
 } circular_buffer;
 
-circular_buffer * cb_init(size_t capacity, size_t sz) {
-    circular_buffer *cb = (circular_buffer *) kzalloc(sizeof(circular_buffer), GFP_KERNEL);
 
-    if(cb == NULL)
-        return NULL;
-
-    cb->buffer = kzalloc(capacity * sz, GFP_KERNEL);
-
-    if (cb->buffer == NULL)
-      return NULL;
-
-    cb->buffer_end = (char *)cb->buffer + capacity * sz;
-    cb->capacity = capacity;
-    cb->count = 0;
-    cb->sz = sz;
-    cb->head = cb->buffer;
-    cb->tail = cb->buffer;
-
-    return cb;
+void circular_buffer_info(circular_buffer *cb) {
+  int i;
+  char *tmp = cb->buffer;
+  
+  pr_info("The buffer has %d * %d elements", cb->max_size, sizeof(char));
+  for (i = 0; i < cb->max_size; i++) {
+    pr_info("%d: addr = %p, value = %hhx\n", i, tmp, *tmp);
+    tmp++;
+  }
 }
 
-void cb_free(circular_buffer *cb) {
-    if (cb) {
-      if (cb->buffer)
-        kfree(cb->buffer);
-      kfree(cb);
-    }
+circular_buffer *circular_buffer_init(int max_size) {
+    circular_buffer * b = (circular_buffer *)kzalloc(sizeof(circular_buffer), GFP_KERNEL);
+    b->first = 0;
+    b->last  = -1;
+    b->size = 0;
+    b->max_size = max_size;
+    b->buffer = (char *)kzalloc(max_size*sizeof(char), GFP_KERNEL);
+    return b;
 }
 
-int cb_push_back(circular_buffer *cb, const void *item) {
-    if(cb->count == cb->capacity){
-      pr_err("Maximum buffer capacity\n");
+char *circular_buffer_get(circular_buffer *b, size_t size){
+  int i;
+  char *d = kzalloc(size, GFP_KERNEL);
+  
+  if (b->size == 0) return NULL;
+
+  for (i = 0; i < size; i++) {
+    d[i] = b->buffer[b->first];
+    b->first = (b-> first + 1) % b->max_size;
+    b->size--;
+  }
+  return d;
+}
+
+char *circular_buffer_read(circular_buffer *b) {
+  if (b->size == 0) return NULL;
+  return &b->buffer[b->first];
+}
+
+
+int circular_buffer_put(circular_buffer *b, char *c, size_t size) {
+  int i;
+  
+  for (i = 0; i < size; i++) { 
+
+    if (b->size == b->max_size) {
+      pr_info("Cannot add data to buffer");
       return 0;
     }
-    memcpy(cb->head, item, cb->sz);
-    cb->head = (char*)cb->head + cb->sz;
-    if(cb->head == cb->buffer_end)
-        cb->head = cb->buffer;
-    cb->count++;
 
-    return 1;
+    b->last = (b->last + 1) % b->max_size;
+    b->buffer[b->last] = c[i];
+    b->size++;
+  }
+  return 1;
 }
 
-int cb_pop_front(circular_buffer *cb, void *item) {
-
-    if(cb->count == 0){
-      pr_err("Cannot remove from empty buffer");
-      return -1;
-    }
-    memcpy(item, cb->tail, cb->sz);
-    cb->tail = (char*)cb->tail + cb->sz;
-    if(cb->tail == cb->buffer_end)
-        cb->tail = cb->buffer;
-    cb->count--;
-
-    return 1;
+int circular_buffer_size(circular_buffer *b) {
+  return b->size;
 }
-
-// ----------------------------------------------------------------- //
 
 #define DRIVER_AUTHOR "Romain, Margheriti, romain.margheriti@telecom-paristech.fr"
 #define DRIVER_DESC   "Driver for ADXL345"
-
-static inline char get_bits(char *x) {
-    return ((x[0]>>2) & 0x3f) | x[1] << 6;
-}
 
 typedef enum AXIS_E { X = 1000, Y = 1001, Z = 1002 } AXIS;
 // x,y,z
@@ -149,44 +141,23 @@ static const struct file_operations adi_adxl345_fops = {
 
 ssize_t adi_adxl345_read(struct file *file, char __user *buf, size_t count, loff_t *f_pos)
 {
-  // struct miscdevice *miscdev  = (struct miscdevice *) file->private_data;
-  // struct i2c_client *client   = to_i2c_client(miscdev->parent);
-  // adxl345_device    *dev      = i2c_get_clientdata(client);
-  // char   DATA[2]              = { 0, 0};
-  //
-  // i2c_master_send(client, &dev->ENABLE_AXIS, 1);
-  // i2c_master_recv(client, DATA, 2);
-  //
-  // if (count == 1) {
-  //   char a = ((DATA[0]>>2) & 0x3f) | DATA[1] << 6;
-  //
-  //   copy_to_user(buf,&a, 1);
-  //
-  //   return 1;
-  // } else {
-  //   copy_to_user(buf,&DATA, 2);
-  //
-  //   return 2;
-  // }
-
-  // test if the buffer is empty
   struct miscdevice *miscdev    = (struct miscdevice *) file->private_data;
   struct i2c_client *client     = to_i2c_client(miscdev->parent);
   adxl345_device    *dev        = i2c_get_clientdata(client);
-  int                buff_size  = dev->buffer->count;
+  int                buff_size  = circular_buffer_size(dev->buffer);
 
   // test if buffer is empty
   if (buff_size == 0)
-    wait_event(dev->queue, ( (buff_size = dev->buffer->count) > 0));
+    wait_event(dev->queue, ((buff_size = circular_buffer_size(dev->buffer) > 0)));
 
   if (count > buff_size) {
     // user ask for more data then we have
-    copy_to_user(buf,  dev->buffer->buffer, buff_size);
+    copy_to_user(buf, circular_buffer_get(dev->buffer, buff_size), buff_size);
 
     return buff_size;
   } else {
     // user ask for less data then max we have
-    copy_to_user(buf,  dev->buffer->buffer, count);
+    copy_to_user(buf, circular_buffer_get(dev->buffer, count), count);
 
     return count;
   }
@@ -241,38 +212,37 @@ irqreturn_t adxl345_irq_fn(int irq, void *arg) {
   i2c_master_send(client, &t[0], 1);
   i2c_master_recv(client, &t[1], 1);
 
-  pr_info("Actual FIFO_CTL = %d\n", ((int) t[1] & 0x1F));
-
+  pr_info("Actual FIFO_CTL = %hhx\n", t[1]);
+  
+  char *d = kzalloc(sizeof(char) * (int) (t[1] & 0x3F), GFP_KERNEL);
+  
   // now we read some data
-  for (i = 0; i < ((int) t[1] & 0x1F); i++) {
-    char *d = kzalloc(sizeof(char), GFP_KERNEL);
+  for (i = 0; i < (t[1] & 0x3F); i++) {
     i2c_master_send(client, &AXIS_REGISTER[0], 1);
     i2c_master_recv(client, data, 2);
-    *d = get_bits(data);
-    cb_push_back(dev->buffer, d);
+    d[i] = ((data[0]>>2) & 0x3f) | data[1] << 6; 
   }
 
-  // print fifo status again
-  i2c_master_send(client, &t[0], 1);
-  i2c_master_recv(client, &t[1], 1);
+  circular_buffer_put(dev->buffer, d, (int) (t[1] & 0x3F));
 
-  pr_info("Actual FIFO_CTL = %d\n", ((int) t[1] & 0x1F));
+  circular_buffer_info(dev->buffer);
 
+  kfree(d);
+  
   return IRQ_HANDLED;
 }
 
 // device
 adxl345_device  *init_adxl345_device(struct i2c_client *client) {
   int ret;
-  adxl345_device *adxl345_dev = (adxl345_device*) devm_kzalloc(&client->dev, sizeof(adxl345_device),
-                         GFP_KERNEL);
+  adxl345_device *adxl345_dev = (adxl345_device*) devm_kzalloc(&client->dev, sizeof(adxl345_device), GFP_KERNEL);
   if (!adxl345_dev) {
     pr_err("Something goes wrong during device memory allocation");
     return NULL;
   }
 
   adxl345_dev->ENABLE_AXIS = 0x32;
-  adxl345_dev->buffer = cb_init(BUFFER_SIZE, sizeof(char));
+  adxl345_dev->buffer = circular_buffer_init(BUFFER_SIZE);
 
   if (!adxl345_dev->buffer) {
     pr_err("Something goes wrong during buffer memory allocation");
@@ -295,6 +265,8 @@ adxl345_device  *init_adxl345_device(struct i2c_client *client) {
     return NULL;
   }
 
+  circular_buffer_info(adxl345_dev->buffer);
+  
   return adxl345_dev;
 }
 
@@ -303,12 +275,10 @@ static int adi_adxl345_probe(struct i2c_client *client, const struct i2c_device_
   char DEVID[2]       = { 0, 0        }; // 0x00 0 DEVID R 11100101 Device ID
   char INT_ENABLE[2]  = { 0x2E, 0x2   }; // 0x2E 46 INT_ENABLE R/W 00000000 Interrupt enable control
   char DATA_FORMAT[2] = { 0x31, 0     }; // 0x31 49 DATA_FORMAT R/W 00000000 Data format control
-  char FIFO_CTL[2]    = { 0x38, 0xD4  }; // 0x38 56 FIFO_CTL R/W 00000000 FIFO control
-  char POWER_CTL[2]   = { 0x2D, 0     }; //0x2D 45 POWER_CTL R/W 00000000 Power-saving features control
+  char FIFO_CTL[2]    = { 0x38, 0x94  }; // 0x38 56 FIFO_CTL R/W 00000000 FIFO control
+  char POWER_CTL[2]   = { 0x2D, 0     }; // 0x2D 45 POWER_CTL R/W 00000000 Power-saving features control
   char STANDBYON      =   0;
   char STANDBYOFF     =   0x8;
-
-  // FIFO status 0x39
 
   int ret;
   adxl345_device *adxl345_dev;
@@ -365,7 +335,7 @@ static int adi_adxl345_remove(struct i2c_client *client)
   i2c_master_send(client, STANDBYON, 2);
   i2c_master_send(client, STANDBYON, 1);
   i2c_master_recv(client, &STANDBYON[1], 1);
-
+  
   misc_deregister(&dev->miscdev);
 
   return 0;
