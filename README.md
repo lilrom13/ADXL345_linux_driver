@@ -14,3 +14,6 @@
 - En apparence il ne se passe rien car les messages sont stockés dans un tampon circulaire. Le niveau de priorité est trop bas pour être affiché dans la console.
 3. Lisez la documentation et expliquez comment fonctionne le Makefile présenté plus haut.
 - Le Makefile présenté plus haut commence par vérifier que la variable *KERNELRELEASE* ne vaut rien afin d'exécuter la condition *else*. Cette condition va appeler le *Makefile* du noyau en lui passant le chemin du répertoire courant. La variable *KERNELRELEASE* vaut cette fois ci quelque chose car nous utilisons le *Makefile* du noyau. Nous compilon alors notre objet *first.o* en tant que module (.ko).
+
+### Interruptions
+1. Faites un tableau récapitulant ce qu’à le droit de faire ou pas les fonctions utilisées dans chacun des cas : gestionnaire d’interruption classique, tasklet, workqueue, threaded IRQ, ainsi que la latence d’exécution des trois derniers mécanismes.
